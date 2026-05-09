@@ -1579,3 +1579,152 @@ class Cart {
 
     assert_no_duplicates(&results, "one_file_method_refs");
 }
+
+// ─── Nullable / union type member references ────────────────────────────────
+
+/// Find references on a @property-read member via a nullable variable
+/// should include the @property-read declaration and non-nullable usages.
+#[test]
+fn member_references_nullable_type_virtual_property() {
+    let backend = create_test_backend();
+    let uri = "file:///tmp/test_refs_nullable_virtual.php";
+    let content = r#"<?php
+
+/**
+ * @property-read string $displayName
+ */
+class Author {
+    public function __get(string $name): mixed { return null; }
+
+    /** @return static|null */
+    public static function first(): ?static { return null; }
+}
+
+function test(): void {
+    $found = Author::first();
+    echo $found->displayName;
+
+    $author = new Author();
+    echo $author->displayName;
+}
+"#;
+
+    open_file(&backend, uri, content);
+
+    // Cursor on `displayName` in `$found->displayName` (line 14)
+    let results = backend
+        .find_references(uri, content, Position::new(14, 18), true)
+        .expect("should find references");
+
+    assert_no_duplicates(&results, "nullable_virtual_prop_refs");
+
+    for (i, loc) in results.iter().enumerate() {
+        eprintln!(
+            "  [{}] {}:{}:{}-{}:{}",
+            i,
+            loc.uri,
+            loc.range.start.line,
+            loc.range.start.character,
+            loc.range.end.line,
+            loc.range.end.character,
+        );
+    }
+
+    // Expect: 1 @property-read declaration + 2 accesses ($found->displayName, $author->displayName)
+    assert_eq!(
+        results.len(),
+        3,
+        "Expected 3 references (1 @property-read declaration + 2 accesses), got {}: {:#?}",
+        results.len(),
+        results
+    );
+}
+
+/// Cross-file find references on a @property-read member via a nullable
+/// variable should include the declaration and non-nullable usages from other files.
+#[test]
+fn cross_file_member_references_nullable_virtual_property() {
+    let (backend, _dir) = crate::common::create_psr4_workspace(
+        r#"{
+            "autoload": {
+                "psr-4": {
+                    "App\\": "src/"
+                }
+            }
+        }"#,
+        &[
+            (
+                "src/Author.php",
+                r#"<?php
+namespace App;
+
+/**
+ * @property-read string $displayName
+ */
+class Author {
+    public function __get(string $name): mixed { return null; }
+
+    /** @return static|null */
+    public static function first(): ?static { return null; }
+}
+"#,
+            ),
+            (
+                "src/Service.php",
+                r#"<?php
+namespace App;
+
+class Service {
+    public function test(): void {
+        $found = Author::first();
+        echo $found->displayName;
+
+        $author = new Author();
+        echo $author->displayName;
+    }
+}
+"#,
+            ),
+        ],
+    );
+
+    let author_path = _dir.path().join("src/Author.php");
+    let service_path = _dir.path().join("src/Service.php");
+
+    let author_uri = format!("file://{}", author_path.display());
+    let service_uri = format!("file://{}", service_path.display());
+
+    let author_content = std::fs::read_to_string(&author_path).unwrap();
+    let service_content = std::fs::read_to_string(&service_path).unwrap();
+
+    open_file(&backend, &author_uri, &author_content);
+    open_file(&backend, &service_uri, &service_content);
+
+    // Cursor on `displayName` in `$found->displayName` (line 6 in Service.php)
+    let results = backend
+        .find_references(&service_uri, &service_content, Position::new(6, 22), true)
+        .expect("should find references");
+
+    assert_no_duplicates(&results, "cross_file_nullable_virtual_prop_refs");
+
+    for (i, loc) in results.iter().enumerate() {
+        eprintln!(
+            "  [{}] {}:{}:{}-{}:{}",
+            i,
+            loc.uri,
+            loc.range.start.line,
+            loc.range.start.character,
+            loc.range.end.line,
+            loc.range.end.character,
+        );
+    }
+
+    // Expect: 1 @property-read declaration in Author.php + 2 accesses in Service.php
+    assert_eq!(
+        results.len(),
+        3,
+        "Expected 3 references (1 @property-read declaration + 2 accesses), got {}: {:#?}",
+        results.len(),
+        results
+    );
+}

@@ -151,6 +151,7 @@ impl Backend {
                 // so we only return references on related classes.
                 let hierarchy =
                     self.resolve_member_access_hierarchy(uri, subject_text, *is_static, span_start);
+
                 self.find_member_references(
                     member_name,
                     *is_static,
@@ -1086,10 +1087,12 @@ impl Backend {
     ) -> Vec<String> {
         let class_loader = self.class_loader(ctx);
         let function_loader = self.function_loader(ctx);
-        let ctx = crate::subject_resolution::SubjectResolutionCtx {
+        let use_map = &ctx.use_map;
+        let namespace = &ctx.namespace;
+        let resolution_ctx = crate::subject_resolution::SubjectResolutionCtx {
             local_classes: &ctx.classes,
-            use_map: &ctx.use_map,
-            namespace: &ctx.namespace,
+            use_map,
+            namespace,
             content,
             class_loader: &class_loader,
             function_loader: &function_loader,
@@ -1099,12 +1102,25 @@ impl Backend {
             subject_text,
             is_static,
             access_offset,
-            &ctx,
+            &resolution_ctx,
         ) {
             Some(php_type) => php_type
                 .top_level_class_names()
                 .into_iter()
-                .map(|n| normalize_fqn(&n))
+                .map(|n| {
+                    let normalized = normalize_fqn(&n);
+                    // top_level_class_names() may return short names
+                    // (e.g. "BlogAuthor" instead of
+                    // "App\Models\BlogAuthor").  Resolve them through
+                    // the file's use-map and namespace so they match
+                    // the FQNs used in the hierarchy set.
+                    if normalized.contains('\\') {
+                        normalized.to_string()
+                    } else {
+                        normalize_fqn(&Self::resolve_to_fqn(&normalized, use_map, namespace))
+                            .to_string()
+                    }
+                })
                 .collect(),
             None => Vec::new(),
         }
