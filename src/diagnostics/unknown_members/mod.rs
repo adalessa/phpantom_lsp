@@ -437,6 +437,7 @@ impl Backend {
                         resolved_class_cache: Some(resolved_cache),
                         function_loader: Some(&function_loader),
                         scope_var_resolver: None,
+                        is_in_static_method: symbol_map.is_in_static_method(span.start),
                     };
                     resolve_subject_outcome(subject_text, access_kind, &rctx)
                 })
@@ -590,6 +591,7 @@ impl Backend {
                                 resolved_class_cache: Some(resolved_cache),
                                 function_loader: Some(&function_loader),
                                 scope_var_resolver: None,
+                                is_in_static_method: symbol_map.is_in_static_method(span.start),
                             };
                             let fresh = resolve_subject_outcome(subject_text, access_kind, &rctx);
                             if let SubjectOutcome::Resolved(ref fresh_classes) = fresh {

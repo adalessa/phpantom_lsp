@@ -762,6 +762,7 @@ impl Backend {
             resolved_class_cache: Some(&self.resolved_class_cache),
             function_loader: Some(&function_loader_cl),
             scope_var_resolver: None,
+            is_in_static_method: false,
         };
 
         let parsed = SubjectExpr::parse(expr);

@@ -530,6 +530,7 @@ impl Backend {
                     resolved_class_cache: Some(&self.resolved_class_cache),
                     function_loader: Some(&function_loader),
                     scope_var_resolver: None,
+                    is_in_static_method: false,
                 };
 
                 let access_kind = if *is_static {
@@ -940,16 +941,11 @@ impl Backend {
 
         // $this resolves to the enclosing class, but not inside static methods.
         if name == "this" {
-            let in_static = crate::parser::with_parsed_program(
-                content,
-                "hover_this_static_check",
-                |program, _| {
-                    crate::util::is_offset_in_static_method_in_program(
-                        &program.statements,
-                        cursor_offset,
-                    )
-                },
-            );
+            let in_static = self
+                .symbol_maps
+                .read()
+                .get(uri)
+                .is_some_and(|map| map.is_in_static_method(cursor_offset));
             if !in_static && let Some(cc) = current_class {
                 let ns_line = namespace_line(cc.file_namespace.as_deref());
                 return Some(make_hover(format!(

@@ -47,17 +47,29 @@ impl Backend {
         let function_loader = self.function_loader(&ctx);
 
         let resolved_types: Vec<PhpType> = match &symbol.kind {
-            SymbolKind::Variable { name } => resolve_variable_type_names(
-                name,
-                content,
-                offset,
-                current_class,
-                &ctx,
-                &class_loader,
-                &function_loader,
-            )
-            .into_iter()
-            .collect(),
+            SymbolKind::Variable { name } => {
+                let in_static = self
+                    .symbol_maps
+                    .read()
+                    .get(uri)
+                    .is_some_and(|map| map.is_in_static_method(offset));
+                // $this is not available in static methods.
+                if name == "this" && in_static {
+                    Vec::new()
+                } else {
+                    resolve_variable_type_names(
+                        name,
+                        content,
+                        offset,
+                        current_class,
+                        &ctx,
+                        &class_loader,
+                        &function_loader,
+                    )
+                    .into_iter()
+                    .collect()
+                }
+            }
 
             SymbolKind::MemberAccess {
                 subject_text,
@@ -83,6 +95,7 @@ impl Backend {
                         &function_loader as &dyn Fn(&str) -> Option<FunctionInfo>,
                     ),
                     scope_var_resolver: None,
+                    is_in_static_method: false,
                 };
 
                 let candidates = ResolvedType::into_arced_classes(
@@ -276,18 +289,8 @@ fn resolve_variable_type_names(
     class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
     function_loader: &dyn Fn(&str) -> Option<FunctionInfo>,
 ) -> Option<PhpType> {
-    // $this resolves to the enclosing class, but not in static methods.
+    // $this resolves to the enclosing class.
     if name == "this" {
-        let in_static =
-            crate::parser::with_parsed_program(content, "this_static_typedef", |program, _| {
-                crate::util::is_offset_in_static_method_in_program(
-                    &program.statements,
-                    cursor_offset,
-                )
-            });
-        if in_static {
-            return None;
-        }
         return current_class.map(|cc| PhpType::Named(cc.name.to_string()));
     }
 

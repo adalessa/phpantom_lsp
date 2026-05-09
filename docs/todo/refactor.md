@@ -212,25 +212,7 @@ Each item must include:
 
 ---
 
-## Outstanding items
-
-### R3. Backward `@var` scanner in `docblock/tags.rs` 🟠
-
-`src/docblock/tags.rs` L520–620 (`find_var_raw_type_in_source`) and L1000–1100
-(`find_iterable_raw_type_in_source`) scan source lines backward with
-`lines().rev()`, manually tracking brace depth and sibling scopes via character
-counting. This reimplements scope analysis that the forward walker and
-`scope_collector/` already provide. Called from `call_resolution.rs` (L1251,
-L2793) and `array_shape.rs` (L519), making them load-bearing.
-
-**Action:** Replace with forward walker variable resolution or ensure the
-forward walker captures `@var` annotations so these backward scanners become
-unnecessary.
-
-**Files:** `src/docblock/tags.rs`, `src/completion/call_resolution.rs`,
-`src/completion/array_shape.rs`
-
----
+# Outstanding items
 
 ## Intentional overlap (reference, not actionable)
 
@@ -258,4 +240,90 @@ A minor inefficiency, not a parallel system.
 back to linear scan of `uri_classes_index`. Covers race conditions during initial
 indexing. Legitimate safety net.
 
+### `DIAGNOSTIC_SCOPE` vs `HOVER_SCOPE_CACHE`
 
+Two caches storing the same data type (`ScopeSnapshotMap`) for different consumers.
+`DIAGNOSTIC_SCOPE` is ephemeral/per-pass (build all scopes for the whole file,
+discard on drop). `HOVER_SCOPE_CACHE` is persistent/per-method with content-hash
+invalidation. The split is intentional: diagnostics check every line so they
+build all scopes upfront; hover checks one spot so it lazily caches per-method.
+However, the `is_diagnostic_scope_active()` guard causes ~14 behavioral forks
+in the forward walker, meaning bugs fixed for one consumer may not manifest for
+the other. Unifying them would eliminate the divergent walker behavior.
+
+### Consumer-gated caches
+
+`CALLABLE_TARGET_CACHE`, `PARSE_CACHE`, and `ACTIVE_RESOLVED_CACHE` are activated
+only during diagnostic/analyse passes. Completion and hover re-resolve callable
+targets and re-parse files from scratch. Extending these to all consumers would
+avoid redundant work.
+
+### `MIXIN_CACHE` never invalidated
+
+`src/virtual_members/phpdoc.rs` `MIXIN_CACHE` is a thread-local
+`HashMap<String, Arc<ClassInfo>>` that caches resolved mixin classes. It is used
+by all consumers (completion, hover, diagnostics) but is never cleared during
+normal LSP operation. If a mixin class definition changes (e.g. a method is added
+to `Illuminate\Database\Eloquent\Builder`), the cache serves stale data until the
+thread dies. Needs content-hash or generation-counter invalidation.
+
+---
+
+## Redundant backwards text walkers
+
+These functions in `src/completion/source/helpers.rs` scan backward with `rfind`
+to find the most recent assignment to a variable. The forward walker's scope map
+already tracks this information during its top-to-bottom pass.
+
+### `extract_closure_return_type_from_assignment`
+
+Uses `rfind("$fn = ")` backward from cursor, then parses closure return type
+from raw text. The forward walker already processes closure assignments and
+extracts return types from the AST node's type hint. Callers in
+`call_resolution.rs` (L1272) and `rhs_resolution.rs` (L2695) should read the
+variable's type from the scope map instead.
+
+### `extract_first_class_callable_return_type`
+
+Uses `rfind("$fn = ")` backward, then resolves `Foo::bar(...)` callable return
+type from text. The forward walker already handles first-class callable
+assignments. Callers in `call_resolution.rs` (L1292) and `rhs_resolution.rs`
+(L2718) should use the scope map.
+
+### `extract_function_return_from_source`
+
+Uses `rfind("/**")` backward to get `@return` type for functions not yet in
+`global_functions`. This is a fallback for unindexed functions and is harder to
+replace, but could be eliminated once all reachable functions are guaranteed to
+be indexed before resolution runs.
+
+---
+
+## SymbolMap data re-extracted from AST
+
+The SymbolMap is built once per file in `update_ast_inner` and stores symbol
+spans, variable definitions, scope boundaries, and call sites. Several features
+re-parse the AST to extract information the SymbolMap already has.
+
+### Variable definition lookup
+
+The SymbolMap has `var_defs` with `find_var_definition()`, but
+`definition/variable/mod.rs` ignores it and does its own full AST walk via
+`find_variable_definition_in_program()`. The SymbolMap's `var_defs` are used
+elsewhere (hover, forward walk) but the go-to-definition feature duplicates
+the work.
+
+### Variables-in-scope collection
+
+`collect_variables_in_scope` in `completion.rs` re-parses the AST to find all
+variables visible at the cursor. The SymbolMap's `var_defs` already has every
+variable definition site with scope boundaries; this could be a filtered query
+on `var_defs` instead of a full AST walk.
+
+### Scope boundary detection
+
+The SymbolMap stores `scopes` (function/closure boundaries) and provides
+`find_enclosing_scope()`. Yet several code action helpers and diagnostic modules
+manually walk the AST to find the enclosing function/method body (e.g.
+`build_scope_map` in extract variable, inline variable, undefined variable
+diagnostics).

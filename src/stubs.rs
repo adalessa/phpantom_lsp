@@ -216,6 +216,36 @@ fn is_preceding_docblock_removed(
     false
 }
 
+/// Quick byte-level check whether a stub constant has been
+/// `@removed` at or before the given PHP version.
+///
+/// Same approach as [`is_stub_function_removed`] but searches for
+/// `define('CONSTANT_NAME'` or `define("CONSTANT_NAME"`.
+pub fn is_stub_constant_removed(
+    source: &str,
+    const_name: &str,
+    php_version: crate::types::PhpVersion,
+) -> bool {
+    if !source.contains("@removed") {
+        return false;
+    }
+
+    // Use the short (unqualified) name for the search pattern.
+    let short = const_name.rsplit('\\').next().unwrap_or(const_name);
+
+    // Constants use `define('NAME',` or `define("NAME",` in stubs.
+    let needle_sq = format!("define('{short}'");
+    let needle_dq = format!("define(\"{short}\"");
+
+    let decl_pos = source.find(&needle_sq).or_else(|| source.find(&needle_dq));
+
+    let Some(pos) = decl_pos else {
+        return false;
+    };
+
+    is_preceding_docblock_removed(source, pos, php_version)
+}
+
 /// Build a lookup table mapping constant names to their embedded PHP
 /// source code.
 ///
@@ -230,4 +260,112 @@ pub fn build_stub_constant_index() -> HashMap<&'static str, &'static str> {
         .iter()
         .map(|&(name, idx)| (name, STUB_FILES[idx]))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::PhpVersion;
+
+    #[test]
+    fn constant_removed_single_quote() {
+        let source = r#"<?php
+/**
+ * @deprecated 7.1
+ * @removed 7.2
+ */
+define('MCRYPT_ENCRYPT', 0);
+"#;
+        assert!(is_stub_constant_removed(
+            source,
+            "MCRYPT_ENCRYPT",
+            PhpVersion { major: 7, minor: 2 }
+        ));
+        assert!(is_stub_constant_removed(
+            source,
+            "MCRYPT_ENCRYPT",
+            PhpVersion { major: 8, minor: 0 }
+        ));
+        assert!(!is_stub_constant_removed(
+            source,
+            "MCRYPT_ENCRYPT",
+            PhpVersion { major: 7, minor: 1 }
+        ));
+    }
+
+    #[test]
+    fn constant_removed_double_quote() {
+        let source = "<?php\n/**\n * @removed 8.0\n */\ndefine(\"OLD_CONST\", 1);\n";
+        assert!(is_stub_constant_removed(
+            source,
+            "OLD_CONST",
+            PhpVersion { major: 8, minor: 0 }
+        ));
+        assert!(!is_stub_constant_removed(
+            source,
+            "OLD_CONST",
+            PhpVersion { major: 7, minor: 4 }
+        ));
+    }
+
+    #[test]
+    fn constant_not_removed() {
+        let source =
+            "<?php\n/**\n * @return int\n */\ndefine('PHP_INT_MAX', 9223372036854775807);\n";
+        assert!(!is_stub_constant_removed(
+            source,
+            "PHP_INT_MAX",
+            PhpVersion { major: 8, minor: 4 }
+        ));
+    }
+
+    #[test]
+    fn constant_no_removed_tag_in_file() {
+        let source = "<?php\ndefine('SOME_CONST', 42);\n";
+        assert!(!is_stub_constant_removed(
+            source,
+            "SOME_CONST",
+            PhpVersion { major: 8, minor: 4 }
+        ));
+    }
+
+    #[test]
+    fn constant_not_found_in_source() {
+        let source = "<?php\n/**\n * @removed 7.2\n */\ndefine('OTHER', 0);\n";
+        assert!(!is_stub_constant_removed(
+            source,
+            "MISSING",
+            PhpVersion { major: 8, minor: 0 }
+        ));
+    }
+
+    #[test]
+    fn function_removed_basic() {
+        let source = "<?php\n/**\n * @removed 7.2\n */\nfunction mcrypt_encrypt() {}\n";
+        assert!(is_stub_function_removed(
+            source,
+            "mcrypt_encrypt",
+            PhpVersion { major: 7, minor: 2 }
+        ));
+        assert!(!is_stub_function_removed(
+            source,
+            "mcrypt_encrypt",
+            PhpVersion { major: 7, minor: 1 }
+        ));
+    }
+
+    #[test]
+    fn class_removed_basic() {
+        let source = "<?php\n/**\n * @removed 8.0\n */\nclass OldClass {}\n";
+        assert!(is_stub_class_removed(
+            source,
+            "OldClass",
+            PhpVersion { major: 8, minor: 0 }
+        ));
+        assert!(!is_stub_class_removed(
+            source,
+            "OldClass",
+            PhpVersion { major: 7, minor: 4 }
+        ));
+    }
 }

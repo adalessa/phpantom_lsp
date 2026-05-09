@@ -59,6 +59,9 @@ struct ExtractionCtx<'a> {
     loop_scopes: Vec<(u32, u32)>,
     /// Ranges of `switch` bodies (where `case/default` labels are valid).
     switch_scopes: Vec<(u32, u32)>,
+    /// Ranges of static method bodies `(start_offset, end_offset)`.
+    /// Used to detect whether `$this` is unavailable at a given offset.
+    static_method_scopes: Vec<(u32, u32)>,
     /// Trivia (comments, whitespace) from the parsed program.
     trivias: &'a [Trivia<'a>],
     /// The full source text of the file being extracted.
@@ -135,6 +138,7 @@ pub(crate) fn extract_symbol_map(program: &Program<'_>, content: &str) -> Symbol
         breakable_scopes: Vec::new(),
         loop_scopes: Vec::new(),
         switch_scopes: Vec::new(),
+        static_method_scopes: Vec::new(),
         trivias: program.trivia.as_slice(),
         content,
         untyped_closure_sites: Vec::new(),
@@ -223,6 +227,7 @@ pub(crate) fn extract_symbol_map(program: &Program<'_>, content: &str) -> Symbol
     ctx.breakable_scopes.sort_by_key(|s| s.0);
     ctx.loop_scopes.sort_by_key(|s| s.0);
     ctx.switch_scopes.sort_by_key(|s| s.0);
+    ctx.static_method_scopes.sort_by_key(|s| s.0);
 
     SymbolMap {
         spans: ctx.spans,
@@ -236,6 +241,7 @@ pub(crate) fn extract_symbol_map(program: &Program<'_>, content: &str) -> Symbol
         breakable_scopes: ctx.breakable_scopes,
         loop_scopes: ctx.loop_scopes,
         switch_scopes: ctx.switch_scopes,
+        static_method_scopes: ctx.static_method_scopes,
         untyped_closure_sites: ctx.untyped_closure_sites,
     }
 }
@@ -1218,6 +1224,9 @@ fn extract_from_method<'a>(method: &'a Method<'a>, ctx: &mut ExtractionCtx<'a>) 
         let s = body.left_brace.start.offset;
         let e = body.right_brace.end.offset;
         ctx.scopes.push((s, e));
+        if is_static {
+            ctx.static_method_scopes.push((s, e));
+        }
         s
     } else {
         0

@@ -1102,3 +1102,79 @@ function my_func(): string|false {}
         "Double-quoted strings in attribute should work"
     );
 }
+
+// ─── set_php_version filters stub_constant_index ────────────────────────────
+
+#[test]
+fn set_php_version_filters_removed_constants() {
+    use std::collections::HashMap;
+
+    let removed_const_stub: &str = Box::leak(
+        concat!(
+            "<?php\n",
+            "/**\n",
+            " * @deprecated 7.1\n",
+            " * @removed 7.2\n",
+            " */\n",
+            "define('MCRYPT_ENCRYPT', 0);\n",
+        )
+        .to_string()
+        .into_boxed_str(),
+    );
+
+    let normal_const_stub: &str = Box::leak(
+        concat!("<?php\n", "define('PHP_EOL', \"\\n\");\n")
+            .to_string()
+            .into_boxed_str(),
+    );
+
+    let mut constant_stubs: HashMap<&'static str, &'static str> = HashMap::new();
+    constant_stubs.insert("MCRYPT_ENCRYPT", removed_const_stub);
+    constant_stubs.insert("PHP_EOL", normal_const_stub);
+
+    let backend = Backend::new_test_with_all_stubs(HashMap::new(), HashMap::new(), constant_stubs);
+
+    // Default version is 8.5, which is >= 7.2, so the removed constant
+    // should already be filtered out after construction.
+    assert!(
+        !backend.stub_constant_index().contains_key("MCRYPT_ENCRYPT"),
+        "MCRYPT_ENCRYPT (@removed 7.2) should be filtered for default PHP 8.5"
+    );
+    assert!(
+        backend.stub_constant_index().contains_key("PHP_EOL"),
+        "PHP_EOL should survive version filtering"
+    );
+    assert_eq!(backend.stub_constant_index().len(), 1);
+}
+
+#[test]
+fn set_php_version_keeps_removed_constants_for_older_version() {
+    // Constant removed in 8.0 — should survive when the default version
+    // is overridden to 7.4 before the filtering pass.
+    let removed_const_stub: &str = Box::leak(
+        concat!(
+            "<?php\n",
+            "/**\n",
+            " * @removed 8.0\n",
+            " */\n",
+            "define('OLD_CONST', 1);\n",
+        )
+        .to_string()
+        .into_boxed_str(),
+    );
+
+    // Construct without the all-stubs helper to avoid the automatic
+    // set_php_version(8.5) call that would filter the constant.
+    let backend = Backend::new_test();
+    backend
+        .stub_constant_index_mut()
+        .insert("OLD_CONST", removed_const_stub);
+
+    // Target PHP 7.4 — constant removed in 8.0 should survive.
+    backend.set_php_version(PhpVersion::new(7, 4));
+
+    assert!(
+        backend.stub_constant_index().contains_key("OLD_CONST"),
+        "OLD_CONST (@removed 8.0) should survive when targeting PHP 7.4"
+    );
+}

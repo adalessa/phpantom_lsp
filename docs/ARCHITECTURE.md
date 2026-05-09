@@ -544,11 +544,12 @@ PHPantom detects the target PHP version during `initialized`:
 
 The detected version is stored on the `Backend` as a `PhpVersion(major, minor)`.
 
-When parsing stubs (both class stubs via `find_or_load_class` and function stubs via `find_or_load_function`), the PHP version is passed through `DocblockCtx.php_version` to the extraction functions. Three filtering points apply:
+When parsing stubs (both class stubs via `find_or_load_class` and function stubs via `find_or_load_function`), the PHP version is passed through `DocblockCtx.php_version` to the extraction functions. Four filtering points apply:
 
 - **Function-level:** `extract_functions_from_statements` checks the function's `#[PhpStormStubsElementAvailable]` attribute. If the version range excludes the target, the entire function is skipped. This handles duplicate function definitions (e.g. `array_combine` has separate signatures for PHP ≤7.4 and ≥8.0).
 - **Method-level:** `extract_class_like_members` applies the same check to methods. For example, `SplFixedArray::__serialize` (from PHP 8.2) is excluded when targeting PHP 8.1.
 - **Parameter-level:** `extract_parameters` filters individual parameters. For example, `array_map`'s untyped `$arrays` parameter (PHP 5.3–7.4) is excluded when targeting PHP 8.0+, leaving only the typed `array $array`.
+- **Constant-level:** `set_php_version` calls `is_stub_constant_removed` to evict constants whose `@removed X.Y` tag indicates they were removed at or before the target version (e.g. `MCRYPT_ENCRYPT` with `@removed 7.2`).
 
 The attribute supports named arguments (`from: '8.0'`, `to: '7.4'`) and a positional argument (`'8.1'` treated as `from`). Both bounds are inclusive. A missing bound means unbounded in that direction.
 

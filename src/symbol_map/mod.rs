@@ -475,6 +475,10 @@ pub(crate) struct SymbolMap {
     /// Switch body boundaries `(start_offset, end_offset)` where
     /// `case` / `default` labels are valid.
     pub switch_scopes: Vec<(u32, u32)>,
+    /// Ranges of static method bodies `(start_offset, end_offset)`.
+    /// Sorted by start offset.  Used to determine whether `$this` is
+    /// unavailable at a given cursor position without re-parsing the AST.
+    pub static_method_scopes: Vec<(u32, u32)>,
     /// Closures and arrow functions passed as arguments to callable-typed
     /// parameters.  Used by inlay hints to show inferred parameter types
     /// and return types from the enclosing callable signature.
@@ -762,6 +766,11 @@ impl SymbolMap {
     /// labels are valid.
     pub fn is_inside_switch_scope(&self, offset: u32) -> bool {
         Self::offset_in_sorted_ranges(&self.switch_scopes, offset)
+    }
+
+    /// Returns `true` when `offset` falls inside a `static` method body.
+    pub fn is_in_static_method(&self, offset: u32) -> bool {
+        Self::offset_in_sorted_ranges(&self.static_method_scopes, offset)
     }
 }
 

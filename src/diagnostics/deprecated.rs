@@ -170,6 +170,7 @@ impl Backend {
                                     resolved_class_cache: Some(cache),
                                     function_loader: Some(&function_loader),
                                     scope_var_resolver: None,
+                                    is_in_static_method: false,
                                 };
 
                                 resolve_variable_subject(subject_text, *is_static, &rctx)

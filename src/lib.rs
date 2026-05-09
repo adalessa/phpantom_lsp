@@ -906,6 +906,14 @@ impl Backend {
         self.stub_constant_index.read()
     }
 
+    /// Write-access the stub constant index (used by integration tests
+    /// to inject test stub entries).
+    pub fn stub_constant_index_mut(
+        &self,
+    ) -> parking_lot::RwLockWriteGuard<'_, HashMap<&'static str, &'static str>> {
+        self.stub_constant_index.write()
+    }
+
     /// Borrow the autoload function index (used by integration tests to
     /// populate discovered function entries for non-Composer projects).
     pub fn autoload_function_index(&self) -> &Arc<RwLock<HashMap<String, PathBuf>>> {
@@ -1149,8 +1157,9 @@ impl Backend {
     /// Set the PHP version (used by integration tests and during
     /// server initialization after reading `composer.json`).
     ///
-    /// Also filters `stub_function_index` and `stub_index` to remove
-    /// entries that do not exist in the given PHP version.
+    /// Also filters `stub_function_index`, `stub_index`, and
+    /// `stub_constant_index` to remove entries that do not exist in
+    /// the given PHP version.
     pub fn set_php_version(&self, version: types::PhpVersion) {
         *self.php_version.lock() = version;
         self.stub_function_index
@@ -1159,6 +1168,9 @@ impl Backend {
         self.stub_index
             .write()
             .retain(|name, source| !stubs::is_stub_class_removed(source, name, version));
+        self.stub_constant_index
+            .write()
+            .retain(|name, source| !stubs::is_stub_constant_removed(source, name, version));
     }
 
     /// Check whether a URI refers to a Blade template file.

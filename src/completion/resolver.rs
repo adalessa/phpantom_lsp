@@ -179,6 +179,11 @@ pub(crate) struct ResolutionCtx<'a> {
     /// `resolve_variable_types` which would trigger a full method-body
     /// re-walk.
     pub scope_var_resolver: ScopeVarResolverFn<'a>,
+    /// Whether the cursor is inside a `static` method body.
+    /// When `true`, `$this` is not available and `SubjectExpr::This`
+    /// resolves to nothing.  Precomputed from the `SymbolMap` at the
+    /// call site to avoid re-parsing the AST.
+    pub is_in_static_method: bool,
 }
 
 /// Bundles the common parameters threaded through variable-type resolution.
@@ -243,6 +248,7 @@ impl<'a> VarResolutionCtx<'a> {
             function_loader: self.loaders.function_loader,
             resolved_class_cache: self.resolved_class_cache,
             scope_var_resolver: self.scope_var_resolver,
+            is_in_static_method: false,
         }
     }
 
@@ -449,25 +455,9 @@ fn resolve_target_classes_expr_inner_impl(
     match expr {
         // ── Keywords that always mean "current class" ────────────
         SubjectExpr::This => {
-            // `$this` is not available inside static methods.  Check the
-            // AST to see whether the cursor is inside a static method body
-            // and return nothing if so.
-            if current_class.is_some() {
-                let cursor = ctx.cursor_offset;
-                let content = ctx.content;
-                let in_static = crate::parser::with_parsed_program(
-                    content,
-                    "this_static_check",
-                    |program, _| {
-                        crate::util::is_offset_in_static_method_in_program(
-                            &program.statements,
-                            cursor,
-                        )
-                    },
-                );
-                if in_static {
-                    return vec![];
-                }
+            // `$this` is not available inside static methods.
+            if current_class.is_some() && ctx.is_in_static_method {
+                return vec![];
             }
 
             // Check for `@param-closure-this` override: when the cursor
