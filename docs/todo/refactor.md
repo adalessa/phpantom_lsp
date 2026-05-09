@@ -223,17 +223,17 @@ already tracks this information during its top-to-bottom pass.
 ### `extract_closure_return_type_from_assignment`
 
 Uses `rfind("$fn = ")` backward from cursor, then parses closure return type
-from raw text. The forward walker already processes closure assignments and
-extracts return types from the AST node's type hint. Callers in
-`call_resolution.rs` (L1272) and `rhs_resolution.rs` (L2695) should read the
-variable's type from the scope map instead.
+from raw text. The forward walker does NOT currently store callable return type
+info — it stores the variable as plain `Closure` via `resolve_rhs_expression`.
+Eliminating this backward walker requires teaching `resolve_rhs_expression` (or
+`resolve_rhs_with_scope`) to produce a `Callable(params, return_type)` PhpType
+for closure/arrow-function expressions.
 
 ### `extract_first_class_callable_return_type`
 
 Uses `rfind("$fn = ")` backward, then resolves `Foo::bar(...)` callable return
-type from text. The forward walker already handles first-class callable
-assignments. Callers in `call_resolution.rs` (L1292) and `rhs_resolution.rs`
-(L2718) should use the scope map.
+type from text. Same situation: the forward walker stores plain `Closure` for
+first-class callable assignments. Needs the same `Callable` type support.
 
 ### `extract_function_return_from_source`
 
@@ -242,18 +242,4 @@ Uses `rfind("/**")` backward to get `@return` type for functions not yet in
 replace, but could be eliminated once all reachable functions are guaranteed to
 be indexed before resolution runs.
 
----
 
-## SymbolMap data re-extracted from AST
-
-The SymbolMap is built once per file in `update_ast_inner` and stores symbol
-spans, variable definitions, scope boundaries, and call sites. Several features
-re-parse the AST to extract information the SymbolMap already has.
-
-### Scope boundary detection
-
-The SymbolMap stores `scopes` (function/closure boundaries) and provides
-`find_enclosing_scope()`. Yet several code action helpers and diagnostic modules
-manually walk the AST to find the enclosing function/method body (e.g.
-`build_scope_map` in extract variable, inline variable, undefined variable
-diagnostics).

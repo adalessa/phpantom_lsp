@@ -27,7 +27,7 @@ use tower_lsp::lsp_types::*;
 use crate::Backend;
 use crate::code_actions::{CodeActionData, make_code_action_data};
 use crate::parser::with_parsed_program;
-use crate::scope_collector::{AccessKind, ScopeMap, collect_function_scope, collect_scope};
+use crate::scope_collector::{AccessKind, ScopeMap};
 use crate::util::{offset_to_position, position_to_byte_offset};
 
 // ─── AST helpers ────────────────────────────────────────────────────────────
@@ -487,102 +487,13 @@ fn expression_has_side_effects(expr: &Expression<'_>) -> bool {
 /// Build a `ScopeMap` for the file by walking the AST, identical to the
 /// approach used in extract_variable.
 fn build_scope_map(content: &str, offset: u32) -> ScopeMap {
-    with_parsed_program(content, "inline_variable", |program, _content| {
-        // Try to find the enclosing function or method.
-        for stmt in program.statements.iter() {
-            if let Some(map) = try_build_scope_from_statement(stmt, offset) {
-                return map;
-            }
-        }
-
-        // Fallback: top-level scope.
-        let body_end = content.len() as u32;
-        collect_scope(program.statements.as_slice(), 0, body_end)
+    with_parsed_program(content, "inline_variable", |program, content| {
+        crate::scope_collector::build_scope_map_for_offset(
+            program.statements.as_slice(),
+            offset,
+            content.len() as u32,
+        )
     })
-}
-
-fn try_build_scope_from_statement(stmt: &Statement<'_>, offset: u32) -> Option<ScopeMap> {
-    match stmt {
-        Statement::Function(func) => {
-            let body_start = func.body.left_brace.start.offset;
-            let body_end = func.body.right_brace.end.offset;
-            if offset >= body_start && offset <= body_end {
-                return Some(collect_function_scope(
-                    &func.parameter_list,
-                    func.body.statements.as_slice(),
-                    body_start,
-                    body_end,
-                ));
-            }
-            None
-        }
-        Statement::Class(class) => {
-            for member in class.members.iter() {
-                if let ClassLikeMember::Method(method) = member
-                    && let MethodBody::Concrete(block) = &method.body
-                {
-                    let body_start = block.left_brace.start.offset;
-                    let body_end = block.right_brace.end.offset;
-                    if offset >= body_start && offset <= body_end {
-                        return Some(collect_function_scope(
-                            &method.parameter_list,
-                            block.statements.as_slice(),
-                            body_start,
-                            body_end,
-                        ));
-                    }
-                }
-            }
-            None
-        }
-        Statement::Trait(tr) => {
-            for member in tr.members.iter() {
-                if let ClassLikeMember::Method(method) = member
-                    && let MethodBody::Concrete(block) = &method.body
-                {
-                    let body_start = block.left_brace.start.offset;
-                    let body_end = block.right_brace.end.offset;
-                    if offset >= body_start && offset <= body_end {
-                        return Some(collect_function_scope(
-                            &method.parameter_list,
-                            block.statements.as_slice(),
-                            body_start,
-                            body_end,
-                        ));
-                    }
-                }
-            }
-            None
-        }
-        Statement::Enum(en) => {
-            for member in en.members.iter() {
-                if let ClassLikeMember::Method(method) = member
-                    && let MethodBody::Concrete(block) = &method.body
-                {
-                    let body_start = block.left_brace.start.offset;
-                    let body_end = block.right_brace.end.offset;
-                    if offset >= body_start && offset <= body_end {
-                        return Some(collect_function_scope(
-                            &method.parameter_list,
-                            block.statements.as_slice(),
-                            body_start,
-                            body_end,
-                        ));
-                    }
-                }
-            }
-            None
-        }
-        Statement::Namespace(ns) => {
-            for inner_stmt in ns.statements().iter() {
-                if let Some(map) = try_build_scope_from_statement(inner_stmt, offset) {
-                    return Some(map);
-                }
-            }
-            None
-        }
-        _ => None,
-    }
 }
 
 // ─── Line deletion helpers ──────────────────────────────────────────────────

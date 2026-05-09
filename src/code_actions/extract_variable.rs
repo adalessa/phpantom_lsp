@@ -12,7 +12,7 @@ use tower_lsp::lsp_types::*;
 use crate::Backend;
 use crate::code_actions::{CodeActionData, make_code_action_data};
 use crate::parser::with_parsed_program;
-use crate::scope_collector::{ScopeMap, collect_function_scope, collect_scope};
+use crate::scope_collector::ScopeMap;
 use crate::util::{find_identical_occurrences, offset_to_position, position_to_byte_offset};
 
 // ─── Name generation ────────────────────────────────────────────────────────
@@ -583,80 +583,12 @@ fn find_enclosing_statement_line(content: &str, selection_start: usize) -> (usiz
 /// This finds the enclosing function/method scope or falls back to
 /// top-level scope.
 fn build_scope_map(content: &str, offset: u32) -> ScopeMap {
-    use mago_syntax::ast::*;
-
-    with_parsed_program(content, "extract_variable", |program, _content| {
-        // Try to find the enclosing function or method.
-        for stmt in program.statements.iter() {
-            if let Statement::Function(func) = stmt {
-                let body_start = func.body.left_brace.start.offset;
-                let body_end = func.body.right_brace.end.offset;
-                if offset >= body_start && offset <= body_end {
-                    return collect_function_scope(
-                        &func.parameter_list,
-                        func.body.statements.as_slice(),
-                        body_start,
-                        body_end,
-                    );
-                }
-            }
-            if let Statement::Class(class) = stmt {
-                for member in class.members.iter() {
-                    if let ClassLikeMember::Method(method) = member
-                        && let MethodBody::Concrete(block) = &method.body
-                    {
-                        let body_start = block.left_brace.start.offset;
-                        let body_end = block.right_brace.end.offset;
-                        if offset >= body_start && offset <= body_end {
-                            return collect_function_scope(
-                                &method.parameter_list,
-                                block.statements.as_slice(),
-                                body_start,
-                                body_end,
-                            );
-                        }
-                    }
-                }
-            }
-            if let Statement::Namespace(ns) = stmt {
-                for inner_stmt in ns.statements().iter() {
-                    if let Statement::Function(func) = inner_stmt {
-                        let body_start = func.body.left_brace.start.offset;
-                        let body_end = func.body.right_brace.end.offset;
-                        if offset >= body_start && offset <= body_end {
-                            return collect_function_scope(
-                                &func.parameter_list,
-                                func.body.statements.as_slice(),
-                                body_start,
-                                body_end,
-                            );
-                        }
-                    }
-                    if let Statement::Class(class) = inner_stmt {
-                        for member in class.members.iter() {
-                            if let ClassLikeMember::Method(method) = member
-                                && let MethodBody::Concrete(block) = &method.body
-                            {
-                                let body_start = block.left_brace.start.offset;
-                                let body_end = block.right_brace.end.offset;
-                                if offset >= body_start && offset <= body_end {
-                                    return collect_function_scope(
-                                        &method.parameter_list,
-                                        block.statements.as_slice(),
-                                        body_start,
-                                        body_end,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Fallback: top-level scope
-        let body_end = content.len() as u32;
-        collect_scope(program.statements.as_slice(), 0, body_end)
+    with_parsed_program(content, "extract_variable", |program, content| {
+        crate::scope_collector::build_scope_map_for_offset(
+            program.statements.as_slice(),
+            offset,
+            content.len() as u32,
+        )
     })
 }
 

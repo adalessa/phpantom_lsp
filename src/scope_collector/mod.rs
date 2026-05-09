@@ -481,6 +481,114 @@ impl<'a> Collector<'a> {
     }
 }
 
+/// Build a [`ScopeMap`] for the function/method/closure body that
+/// contains `offset`.  Walks top-level and namespaced statements to
+/// find the enclosing body, then collects variable accesses within it.
+///
+/// This is the shared implementation behind the `build_scope_map`
+/// helpers in extract-function, extract-variable, and inline-variable
+/// code actions.  All three need the same "find enclosing scope, then
+/// collect" pattern.
+pub(crate) fn build_scope_map_for_offset(
+    statements: &[Statement<'_>],
+    offset: u32,
+    content_len: u32,
+) -> ScopeMap {
+    for stmt in statements {
+        if let Some(map) = try_build_scope_from_statement(stmt, offset) {
+            return map;
+        }
+    }
+    // Fallback: top-level scope.
+    collect_scope(statements, 0, content_len)
+}
+
+/// Recursively try to build a scope map from a single statement that
+/// contains `offset`.
+fn try_build_scope_from_statement(stmt: &Statement<'_>, offset: u32) -> Option<ScopeMap> {
+    match stmt {
+        Statement::Function(func) => {
+            let body_start = func.body.left_brace.start.offset;
+            let body_end = func.body.right_brace.end.offset;
+            if offset >= body_start && offset <= body_end {
+                return Some(collect_function_scope_with_kind(
+                    &func.parameter_list,
+                    func.body.statements.as_slice(),
+                    body_start,
+                    body_end,
+                    FrameKind::Function,
+                ));
+            }
+        }
+        Statement::Class(class) => {
+            for member in class.members.iter() {
+                if let ClassLikeMember::Method(method) = member
+                    && let MethodBody::Concrete(block) = &method.body
+                {
+                    let body_start = block.left_brace.start.offset;
+                    let body_end = block.right_brace.end.offset;
+                    if offset >= body_start && offset <= body_end {
+                        return Some(collect_function_scope_with_kind(
+                            &method.parameter_list,
+                            block.statements.as_slice(),
+                            body_start,
+                            body_end,
+                            FrameKind::Method,
+                        ));
+                    }
+                }
+            }
+        }
+        Statement::Trait(tr) => {
+            for member in tr.members.iter() {
+                if let ClassLikeMember::Method(method) = member
+                    && let MethodBody::Concrete(block) = &method.body
+                {
+                    let body_start = block.left_brace.start.offset;
+                    let body_end = block.right_brace.end.offset;
+                    if offset >= body_start && offset <= body_end {
+                        return Some(collect_function_scope_with_kind(
+                            &method.parameter_list,
+                            block.statements.as_slice(),
+                            body_start,
+                            body_end,
+                            FrameKind::Method,
+                        ));
+                    }
+                }
+            }
+        }
+        Statement::Enum(en) => {
+            for member in en.members.iter() {
+                if let ClassLikeMember::Method(method) = member
+                    && let MethodBody::Concrete(block) = &method.body
+                {
+                    let body_start = block.left_brace.start.offset;
+                    let body_end = block.right_brace.end.offset;
+                    if offset >= body_start && offset <= body_end {
+                        return Some(collect_function_scope_with_kind(
+                            &method.parameter_list,
+                            block.statements.as_slice(),
+                            body_start,
+                            body_end,
+                            FrameKind::Method,
+                        ));
+                    }
+                }
+            }
+        }
+        Statement::Namespace(ns) => {
+            for inner in ns.statements().iter() {
+                if let Some(map) = try_build_scope_from_statement(inner, offset) {
+                    return Some(map);
+                }
+            }
+        }
+        _ => {}
+    }
+    None
+}
+
 /// Collect all variable reads and writes within a function/method body.
 ///
 /// `body_start` and `body_end` are the byte offsets of the opening `{`
