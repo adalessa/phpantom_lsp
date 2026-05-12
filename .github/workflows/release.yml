@@ -27,10 +27,15 @@ jobs:
           - target: x86_64-apple-darwin
             os: macos-latest
             archive: tar.gz
+            macos_sign: true
           - target: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
+            macos_sign: true
           - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+          - target: aarch64-pc-windows-msvc
             os: windows-latest
             archive: zip
 
@@ -55,6 +60,80 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
+      # --- macOS: import certificate and sign the binary ---
+
+      - name: Import Apple Developer ID certificate
+        if: matrix.macos_sign
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          # Write the .p12 to disk
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+
+          # Create a temporary keychain so we don't touch the login keychain
+          security create-keychain -p actions-keychain phpantom.keychain
+          security set-keychain-settings -lut 21600 phpantom.keychain
+          security unlock-keychain -p actions-keychain phpantom.keychain
+
+          # Import the certificate + private key
+          security import certificate.p12 \
+            -k phpantom.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security list-keychain -d user -s phpantom.keychain
+
+          # Allow codesign to use the key without a UI prompt
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -k actions-keychain \
+            phpantom.keychain
+
+          rm certificate.p12
+
+      - name: Sign binary (macOS)
+        if: matrix.macos_sign
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          codesign \
+            --keychain phpantom.keychain \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            --options runtime \
+            --timestamp \
+            --force \
+            target/${{ matrix.target }}/release/phpantom_lsp
+
+      - name: Notarize binary (macOS)
+        if: matrix.macos_sign
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Zip just for submission — notarytool requires an archive
+          ditto -c -k --keepParent \
+            target/${{ matrix.target }}/release/phpantom_lsp \
+            phpantom_lsp-notarize.zip
+
+          xcrun notarytool submit phpantom_lsp-notarize.zip \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_ID_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+          rm phpantom_lsp-notarize.zip
+
+          # Staple the notarization ticket onto the binary itself
+          xcrun stapler staple target/${{ matrix.target }}/release/phpantom_lsp
+
+      - name: Delete temporary keychain
+        if: matrix.macos_sign && always()
+        run: |
+          security delete-keychain phpantom.keychain || true
+
+      # --- Package ---
+
       - name: Package (unix)
         if: matrix.archive == 'tar.gz'
         run: |
@@ -66,7 +145,9 @@ jobs:
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          Compress-Archive -Path "target/${{ matrix.target }}/release/phpantom_lsp.exe" -DestinationPath "phpantom_lsp-${{ matrix.target }}.zip"
+          Compress-Archive `
+            -Path "target/${{ matrix.target }}/release/phpantom_lsp.exe" `
+            -DestinationPath "phpantom_lsp-${{ matrix.target }}.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
