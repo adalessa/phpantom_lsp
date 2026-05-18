@@ -2,6 +2,20 @@
 
 ## Installation
 
+### Homebrew (macOS and Linux)
+
+```bash
+brew install phpantom-lsp
+```
+
+### Cargo
+
+```bash
+cargo install phpantom_lsp
+```
+
+See [phpantom_lsp on crates.io](https://crates.io/crates/phpantom_lsp).
+
 ### Pre-built Binaries
 
 Download the latest binary for your platform from [GitHub Releases](https://github.com/AJenbo/phpantom_lsp/releases/latest). Available for:
@@ -55,9 +69,17 @@ To make PHPantom the default PHP language server, add to your Zed `settings.json
 <details>
 <summary><b>Neovim</b></summary>
 
+PHPantom is included in [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig). If you use nvim-lspconfig, enable it with:
+
+```lua
+require('lspconfig').phpantom.setup({})
+```
+
+Alternatively, with Neovim's built-in LSP client (no plugins required):
+
 ```lua
 vim.lsp.config['phpantom'] = {
-  cmd = { '/path/to/phpantom_lsp' },
+  cmd = { 'phpantom_lsp' },
   filetypes = { 'php' },
   root_markers = { 'composer.json', '.git' },
 }
